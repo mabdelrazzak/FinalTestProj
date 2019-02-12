@@ -1,0 +1,85 @@
+SELECT ID,ORDER_ID,AMOUNT,NATIVE_AMOUNT,
+NATIVE_CURRENCY,PAYMENT_METHOD_ID,PAYMENT_METHOD_NAME,PSP_NAME,IDENTIFIER,COUNTRY,STATUS,PAID_DATE,CREATED_AT,UPDATED_AT FROM fraud.payments limit 100;DEV_MO.PAYMENTS@
+select
+--	NOW() as reload_datetime,
+  	c.`email` AS 'EMAIL',
+	IFNULL(c.`first_name`, '') AS 'FIRSTNAME',
+	cat.`name`	as 'ABANDONED_PRODUCT',
+	concat('media/default/images/providers/', i.`filename`	)	as 'ABANDONED_IMAGE',
+	cat.`slug`	as 'ABANDONED_PRD_SLUG',
+	CASE
+		WHEN rpt.root_id = 1 THEN 'CallCredit'
+		WHEN rpt.root_id = 2 THEN 'Prepaid Creditcard'
+		WHEN rpt.root_id = 3 THEN 'Entertainment'
+		WHEN rpt.root_id = 4 THEN 'Game'
+		WHEN rpt.root_id = 5 THEN 'Ticket'
+		WHEN rpt.root_id = 6 THEN 'Giftcards'
+	END as 'ABANDONED_CATEGORY',
+	partner.`name` as 'LAST_ORDER_LABEL',
+	o.`created_at` as 'ABANDONED_TIME',
+	c.`email_validation_result` as 'KICKBOX_RESULT'
+from beltegoed.`order` o
+left join beltegoed.`order_line` ol ON o.id = ol.order_id
+inner join beltegoed.`customer` c ON o.`customer_id` = c.`id`
+inner join beltegoed.`product` p ON ol.`product_id` = p.`id`
+inner join beltegoed.`category` cat ON ol.`category_id` = cat.`id`
+left join beltegoed.`product_item` pi ON ol.`product_id` = pi.`product_id`
+left join beltegoed.`item` i ON pi.`item_id` = i.`id`
+left join beltegoed.partner_product_info ppi ON p.id = ppi.`product_id` And o.`partner_id` = ppi.`partner_id`
+left join beltegoed.partner partner ON ppi.`partner_id` = partner.id
+left join beltegoed.product_type rpt ON p.`product_type_id` = rpt.`id`
+-- get latest INCOMPLETE order DATE per email in last 2 day overlapping records will be managed in dotmailer
+Inner join (
+	Select c.`email` as email2, MAX(o.`created_at`) as max_date
+	from beltegoed.`order` o
+	inner join beltegoed.`customer` c ON o.`customer_id` = c.`id`
+	where 1=1
+	And o.`payment_status` not in ('paid')
+	And o.`status` not in ('shipped')
+	And o.`created_at` > DATE_ADD(now(), INTERVAL -2 DAY)
+	Group by c.`email`
+) sub ON o.`created_at` = sub.`max_date` and c.`email` = sub.email2
+where 1=1
+And partner.`name` IN ('Beltegoed.nl', 'Guthaben.de', 'MobileTopUp.co.uk', 'Herladen.com', 'Recharge.fr')
+-- show incomplete orders only
+And o.`payment_status` not in ('paid')
+And o.`status` not in ('shipped')
+-- this date should correspond with the date in 'sub' select above
+And o.`created_at` > DATE_ADD(now(), INTERVAL -2 DAY)
+And c.`email_validation_result` IN ('deliverable', 'risky')
+-- excluding emails that have bought something in last X days OR were rejected by cashshield or bank in last Y days
+And c.`email` NOT IN
+(
+Select distinct c2.`email`
+from beltegoed.`customer` c2
+inner join beltegoed.`order` o2 ON o2.`customer_id` = c2.`id`
+Where
+(
+o2.`payment_status` = 'paid'
+And o2.`status` = 'shipped'
+And o2.`created_at` > DATE_ADD(now(), INTERVAL -15 DAY)
+)
+OR
+(
+	o2.`cluster_id` IN
+	(
+		select cgpay.cluster_id
+		from `cgpay`.`pay_payment` cgpay
+		where cgpay.detailed_status IN ('cancelled.by_acquirer', 'cancelled.by_cashshield_validation')
+
+		and cgpay.`created_at` > DATE_ADD(now(), INTERVAL -15 DAY)
+	)
+)
+)
+
+-- For Europe they need to be customer
+And c.`email` IN
+(
+Select distinct c2.`email`
+from beltegoed.`customer` c2
+inner join beltegoed.`order` o2 ON o2.`customer_id` = c2.`id`
+Where 1=1
+And o2.`payment_status` = 'paid'
+And o2.`status` = 'shipped'
+AND o2.`created_at` > DATE_ADD(now(), INTERVAL -2 YEAR)
+); DEV_MO.ACE_BELTEGOED_TEST
